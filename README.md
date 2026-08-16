@@ -58,7 +58,9 @@
 ### 1. 벨만 최적 방정식 (Bellman Optimality Equation)
 에이전트가 상태 $s$에서 행동 $a$를 취했을 때 얻을 수 있는 최적 행동-가치 함수(Q-값) $Q^*(s, a)$는 다음과 같이 정의됩니다:
 
-$$Q^*(s, a) = \mathbb{E} \left[ r + \gamma \max_{a'} Q^*(s', a') \;\middle|\; s, a \right]$$
+$$
+Q^*(s, a) = \mathbb{E} \left[ r + \gamma \max_{a'} Q^*(s', a') \mid s, a \right]
+$$
 
 * $r$: 즉각 보상 (Immediate Reward)
 * $\gamma \in [0, 1)$: 미래 보상 할인율 (Discount Factor, 본 프로젝트에서는 `0.99`)
