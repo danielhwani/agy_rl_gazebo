@@ -8,7 +8,7 @@
 
 경기장(Stage 1 Arena, $5\text{m} \times 5\text{m}$) 중앙에서 시작하는 **터틀봇(TurtleBot3 Burger)**이 경기장 내 무작위 위치에 생성되는 **붉은색 원형 목표 마커(`goal_box`)를 최단 경로로 찾아가도록 학습**합니다.
 
-```
+```text
 +-----------------------------------+
 |               Wall                |
 |                                   |
@@ -31,6 +31,88 @@
 * **거리 단축 진행 보상**: $(d_{\text{prev}} - d_{\text{curr}}) \times 50.0$ (목표에 가까워질수록 보상 부여)
 * **방향 정렬 페널티**: $- \frac{|\Delta\theta|}{\pi} \times 0.15$ (목표 반대 방향을 바라볼수록 감점)
 * **스텝 비용**: $-0.05$ (최단 시간 내 최단 경로 주행 유도)
+
+---
+
+## 🧠 DQN (Deep Q-Network) 알고리즘 및 수식
+
+본 프로젝트는 딥마인드(DeepMind)의 **DQN(Deep Q-Network)** 알고리즘을 로봇 내비게이션 제어에 맞추어 직접 구현하였습니다.
+
+```
+                  ┌──────────────────┐
+                  │  Gazebo & ROS 2  │
+                  └────────┬─────────┘
+        State s_t (26-dim) │ ▲ Action a_t (CmdVel)
+                           ▼ │
+               ┌───────────────────────────┐
+               │    DQN Agent (PyTorch)    │
+               │                           │
+               │  [Replay Buffer]          │
+               │  (s, a, r, s', done)      │
+               │            │              │
+               │   Policy Network Q(s, a)  │
+               │   Target Network Q(s', a')│
+               └───────────────────────────┘
+```
+
+### 1. 벨만 최적 방정식 (Bellman Optimality Equation)
+에이전트가 상태 $s$에서 행동 $a$를 취했을 때 얻을 수 있는 최적 행동-가치 함수(Q-값) $Q^*(s, a)$는 다음과 같이 정의됩니다:
+
+$$Q^*(s, a) = \mathbb{E} \left[ r + \gamma \max_{a'} Q^*(s', a') \;\middle|\; s, a \right]$$
+
+* $r$: 즉각 보상 (Immediate Reward)
+* $\gamma \in [0, 1)$: 미래 보상 할인율 (Discount Factor, 본 프로젝트에서는 `0.99`)
+* $s'$: 행동 $a$를 취한 후 도달하는 다음 상태 (Next State)
+
+---
+
+### 2. 손실 함수 (Loss Function) 및 타깃 네트워크
+신경망 파라미터 $\theta$를 최적화하기 위해, 현재 정책 네트워크의 예측값과 타깃 네트워크($\theta^-$)가 계산한 목표값 간의 **Huber Loss (Smooth L1 Loss)**를 최소화합니다:
+
+$$y = r + (1 - d) \cdot \gamma \max_{a'} Q(s', a'; \theta^-)$$
+
+$$\mathcal{L}(\theta) = \mathbb{E}_{(s, a, r, s', d) \sim \mathcal{D}} \left[ \text{HuberLoss}\left( Q(s, a; \theta) - y \right) \right]$$
+
+* $d \in \{0, 1\}$: 에피소드 종료 플래그 (`done`: 충돌 또는 목표 도달 시 $1$, 주행 중 $0$)
+* $\mathcal{D}$: 경험 리플레이 버퍼 (Replay Buffer)
+* **Huber Loss**: 이상치(Outlier) 오차 발생 시 그래디언트 폭주를 방지하여 학습 안정성을 대폭 향상시킵니다.
+
+---
+
+### 3. 경험 리플레이 (Experience Replay Buffer)
+* 연속된 로봇 시계열 데이터 간의 상관관계(Temporal Correlation)를 제거하기 위해 전이 튜플 $(s_t, a_t, r_t, s_{t+1}, d_t)$를 큐(`capacity = 50,000`)에 저장합니다.
+* 학습 시에는 무작위 미니배치($N = 64$) 단위로 균일 추출하여 신경망을 업데이트합니다.
+
+---
+
+### 4. 타깃 네트워크 소프트 업데이트 (Soft Target Update)
+학습 목표값의 급격한 변동을 억제하기 위해 **Polyak 평균(Soft Update)**을 적용하여 타깃 파라미터 $\theta^-$를 부드럽게 갱신합니다:
+
+$$\theta^- \leftarrow \tau \theta + (1 - \tau) \theta^- \quad (\tau = 0.005)$$
+
+---
+
+### 5. $\epsilon$-Greedy 탐색 정책 (Exploration & Exploitation)
+초기에는 다양한 경로를 탐색하고, 학습이 진행될수록 축적된 Q-값을 기반으로 최적 행동을 선택합니다:
+
+$$a_t = \begin{cases} \text{UniformRandom}(\mathcal{A}), & \text{with probability } \epsilon \\ \arg\max_{a} Q(s_t, a; \theta), & \text{with probability } 1 - \epsilon \end{cases}$$
+
+$$\epsilon \leftarrow \max(\epsilon_{\min}, \epsilon \times \epsilon_{\text{decay}}) \quad (\epsilon_{\text{start}} = 1.0, \epsilon_{\text{decay}} = 0.995, \epsilon_{\min} = 0.05)$$
+
+---
+
+## 🛠️ 사용된 라이브러리 및 기술 스택
+
+본 프로젝트는 외부 강화학습 래퍼 프레임워크(Gymnasium, Ray, SB3 등)에 의존하지 않고, **로봇 공학 표준 도구와 딥러닝 핵심 라이브러리만을 조합**하여 구현되었습니다.
+
+| 라이브러리 / 도구 | 버전 / 환경 | 주요 역할 및 사용 목적 |
+| :--- | :--- | :--- |
+| **PyTorch (`torch`)** | `1.11.0+` | • 심층 Q-네트워크(`QNetwork`) 모델링 (Linear + ReLU)<br>• Huber Loss 및 Adam 옵티마이저 역전파 훈련<br>• 모델 가중치 체크포인트 저장/불러오기 (`.pth`) |
+| **ROS 2 Humble (`rclpy`)** | `Humble Hawksbill` | • 파이썬 기반 노드(`GazeboTurtleBotEnv`) 생성<br>• 센서 토픽 구독 (`/scan`, `/odom`)<br>• 속도 제어 토픽 발행 (`/cmd_vel`)<br>• Gazebo 시뮬레이션 리셋/스폰 서비스 클라이언트 통신 |
+| **Gazebo Simulator** | `Gazebo 11 (Classic)` | • 3D 로봇 물리 시뮬레이션 환경 (`ode` 물리 엔진)<br>• TurtleBot3 Burger 로봇 및 Stage 1 Arena 렌더링<br>• 목표 마커(`goal_box`) 동적 생성 및 위치 갱신 |
+| **NumPy (`numpy`)** | `1.24.4` | • 360도 LiDAR 레이저 스캔을 24개 방위 섹터로 다운샘플링<br>• 쿼터니언 $\rightarrow$ 오일러(Yaw) 각도 변환 및 상대 방위각 정규화<br>• 경험 리플레이 배치 텐서 변환 |
+| **Matplotlib (`matplotlib`)** | `3.10.6` | • 서버/헤드리스 환경 지원 (`Agg` 백엔드)<br>• 에피소드별 리워드, 스텝 수, $\epsilon$ 감쇠, 손실값 실시간 4분할 그래프 생성 (`logs/training_plot_*.png`) |
+| **Python Standard Lib** | `Python 3.10` | • `collections.deque`: 빠른 $O(1)$ Replay Buffer 큐 구현<br>• `json`: 학습 히스토리 및 벤치마크 지표 직렬화 저장<br>• `argparse`: 에피소드, 스텝, 학습률 CLI 파라미터 파싱 |
 
 ---
 
